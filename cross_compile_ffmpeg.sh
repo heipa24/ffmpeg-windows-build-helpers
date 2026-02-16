@@ -1024,7 +1024,7 @@ build_libpng() {
 }
 
 build_libwebp() {
-  do_git_checkout https://chromium.googlesource.com/webm/libwebp.git libwebp_git v1.2.4
+  do_git_checkout https://github.com/webmproject/libwebp.git libwebp_git v1.2.4
   cd libwebp_git
     export LIBPNG_CONFIG="$mingw_w64_x86_64_prefix/bin/libpng-config --static" # LibPNG somehow doesn't get autodetected.
     generic_configure "--disable-wic"
@@ -1517,11 +1517,15 @@ build_libbluray() {
         sed -i.bak "/WIN32$/,+4d" src/udfread.c # Fix WinXP incompatibility.
       fi
       if [[ ! -f src/udfread-version.h ]]; then
-        generic_configure # Generate 'udfread-version.h', or building Libbluray fails otherwise.
+        generic_meson # Generate 'udfread-version.h', or building Libbluray fails otherwise.
       fi
     cd ../..
-    generic_configure "--disable-examples --disable-bdjava-jar"
-    do_make_and_make_install "CPPFLAGS=\"-Ddec_init=libbr_dec_init\""
+  # 改用meson,具体原因参见https://github.com/rdp/ffmpeg-windows-build-helpers/issues/771
+  generic_meson
+  cd build
+  ninja
+  ninja install
+  cd ..
   cd ..
 }
 
@@ -1547,7 +1551,7 @@ build_libflite() {
   # download_and_unpack_file http://www.festvox.org/flite/packed/flite-2.1/flite-2.1-release.tar.bz2
   # original link is not working so using a substitute
   # from a trusted source
-  download_and_unpack_file http://deb.debian.org/debian/pool/main/f/flite/flite_2.1-release.orig.tar.bz2 flite-2.1-release
+  download_and_unpack_file http://www.festvox.org/flite/packed/flite-2.1/flite-2.1-release.tar.bz2  flite-2.1-release
   cd flite-2.1-release
     apply_patch file://$patch_dir/flite-2.1.0_mingw-w64-fixes.patch
     if [[ ! -f main/Makefile.bak ]]; then
@@ -1703,7 +1707,7 @@ build_libcaca() {
 }
 
 build_libdecklink() {
-  local url=https://notabug.org/RiCON/decklink-headers.git
+  local url=https://github.com/Framatome/decklink-headers.git
   git ls-remote $url
   if [ $? -ne 0 ]; then
     # If NotABug.org server is down , Change to use GitLab.com .
@@ -1823,7 +1827,7 @@ build_libxvid() {
 }
 
 build_libvpx() {
-  do_git_checkout https://chromium.googlesource.com/webm/libvpx.git libvpx_git "origin/main"
+  do_git_checkout https://github.com/webmproject/libvpx.git libvpx_git "origin/main"
   cd libvpx_git
     apply_patch file://$patch_dir/vpx_160_semaphore.patch -p1 # perhaps someday can remove this after 1.6.0 or mingw fixes it LOL
     if [[ $compiler_flavors == "native" ]]; then
@@ -1842,7 +1846,7 @@ build_libvpx() {
 }
 
 build_libaom() {
-  do_git_checkout https://aomedia.googlesource.com/aom aom_git
+  do_git_checkout https://gitcode.com/deepin-community/aom.git aom_git
   if [[ $compiler_flavors == "native" ]]; then
     local config_options=""
   elif [ "$bits_target" = "32" ]; then
@@ -2576,9 +2580,9 @@ build_ffmpeg() {
     if [[ "$non_free" = "y" ]]; then
       config_options+=" --enable-nonfree --enable-libfdk-aac"
 
-      if [[ $compiler_flavors != "native" ]]; then
-        config_options+=" --enable-decklink" # Error finding rpc.h in native builds even if it's available
-      fi
+     # if [[ $compiler_flavors != "native" ]]; then
+     #    config_options+=" --enable-decklink" # Error finding rpc.h in native builds even if it's available
+     # fi
       # other possible options: --enable-openssl [unneeded since we already use gnutls]
     fi
 
@@ -2656,7 +2660,7 @@ build_ffmpeg() {
   else
     cd "$work_dir"
   fi
-}
+ }
 
 build_lsw() {
    # Build L-Smash-Works, which are AviSynth plugins based on lsmash/ffmpeg
