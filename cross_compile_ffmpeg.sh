@@ -908,6 +908,25 @@ build_libleptonica() {
   cd leptonica_git
     export CPPFLAGS="-DOPJ_STATIC"
     generic_configure_make_install
+
+    # 确保 lept.pc 被安装到 pkgconfig 目录
+    if [ ! -f "$mingw_w64_x86_64_prefix/lib/pkgconfig/lept.pc" ]; then
+        echo "Installing lept.pc manually..."
+        if [ -f "lept.pc" ]; then
+            cp lept.pc "$mingw_w64_x86_64_prefix/lib/pkgconfig/" || exit 1
+        else
+            echo "Warning: lept.pc not found in leptonica source. Build may fail later."
+        fi
+    fi
+
+    # 修复 lept.pc：添加 -lwebp -lsharpyuv 到 Libs 行
+    pcfile="$mingw_w64_x86_64_prefix/lib/pkgconfig/lept.pc"
+    if [ -f "$pcfile" ]; then
+        # 追加 -lwebp -lsharpyuv 到 Libs 行末尾
+        sed -i.bak 's/^Libs: \(.*\)$/Libs: \1 -lwebp -lsharpyuv/' "$pcfile"
+        echo "Fixed lept.pc: added -lwebp -lsharpyuv to Libs"
+    fi
+
     reset_cppflags
   cd ..
 }
@@ -965,19 +984,19 @@ build_lensfun() {
 }
 
 build_libtesseract() {
-  build_libtiff # no disable configure option for this in tesseract? odd...
+  build_libtiff
   build_libleptonica
   do_git_checkout https://github.com/tesseract-ocr/tesseract.git tesseract_git 4.1.1
   cd tesseract_git
-    sed -i.bak 's/libcurl/libbcurl_disabled/g' configure.ac # --disable-curl hard disable, sometimes it's here but they link it wrong so punt...
+    sed -i.bak 's/libcurl/libbcurl_disabled/g' configure.ac
     if [[ $compiler_flavors != "native"  ]]; then
       apply_patch file://$patch_dir/tesseract-4.1.1_mingw-std-threads.patch
       generic_configure "--disable-openmp"
       do_make_and_make_install
-      sed -i.bak 's/-ltesseract.*$/-ltesseract -lstdc++ -lws2_32 -llept -ltiff -llzma -ljpeg -lz/' $PKG_CONFIG_PATH/tesseract.pc # why does it needs winsock? LOL plus all of libtiff's <sigh>
+      sed -i.bak 's/-ltesseract.*$/-ltesseract -lstdc++ -lws2_32 -llept -ltiff -llzma -ljpeg -lz/' $PKG_CONFIG_PATH/tesseract.pc
     else
       generic_configure_make_install
-      sed -i.bak 's/-ltesseract.*$/-ltesseract -lstdc++ -llept -ltiff -llzma -ljpeg -lz -lgomp/' $PKG_CONFIG_PATH/tesseract.pc # see above, gomp for linux native
+      sed -i.bak 's/-ltesseract.*$/-ltesseract -lstdc++ -llept -ltiff -llzma -ljpeg -lz -lgomp/' $PKG_CONFIG_PATH/tesseract.pc
     fi
   cd ..
 }
@@ -1024,13 +1043,53 @@ build_libpng() {
 }
 
 build_libwebp() {
-  do_git_checkout https://github.com/webmproject/libwebp.git libwebp_git v1.2.4
+  do_git_checkout https://github.com/webmproject/libwebp.git libwebp_git v1.6.0
   cd libwebp_git
+    rm -f already_* || true
     export LIBPNG_CONFIG="$mingw_w64_x86_64_prefix/bin/libpng-config --static" # LibPNG somehow doesn't get autodetected.
     generic_configure "--disable-wic"
     do_make_and_make_install
+
+    # 强制将 sharpyuv 添加到 libwebp.pc 的 Libs.private 中
+    pcfile="${mingw_w64_x86_64_prefix}/lib/pkgconfig/libwebp.pc"
+    if [ -f "$pcfile" ]; then
+        if ! grep -q -lsharpyuv "$pcfile"; then
+            # 追加到 Libs.private 行（若存在），否则在 Libs 行后添加新行
+            if grep -q '^Libs.private:' "$pcfile"; then
+                sed -i 's/^Libs.private: \(.*\)/Libs.private: \1 -lsharpyuv/' "$pcfile"
+            else
+                # 在 Libs 行后插入 Libs.private 行
+                sed -i '/^Libs:/a Libs.private: -lsharpyuv' "$pcfile"
+            fi
+        fi
+    fi
+
     unset LIBPNG_CONFIG
   cd ..
+}
+
+build_sharpyuv() {
+  # 从 libwebp 仓库构建 sharpyuv 子项目（libwebp >= 1.3.0 需要）
+  do_git_checkout https://github.com/webmproject/libwebp.git libwebp_git v1.6.0
+  if [ -d libwebp_git/sharpyuv ]; then
+    cd libwebp_git/sharpyuv
+    rm -f already_* || true
+    # 选择构建器:首选 CMake or configure or make
+    if [ -f CMakeLists.txt ]; then
+      do_cmake_and_install
+    elif [ -f configure ] || [ -f configure.ac ]; then
+      generic_configure
+      do_make_and_make_install
+    else
+      make || true
+      if [ -f Makefile ]; then
+        do_make_and_make_install
+      fi
+    fi
+    cd ../..
+  else
+    echo "sharpyuv directory not found in libwebp_git, skipping sharpyuv build"
+  fi
 }
 
 build_harfbuzz() {
@@ -2731,6 +2790,7 @@ build_ffmpeg_dependencies() {
   build_glfw
   #build_libjpeg_turbo # mplayer can use this, VLC qt might need it? [replaces libjpeg] (ffmpeg seems to not need it so commented out here)
   build_libpng # Needs zlib >= 1.0.4. Uses dlfcn.
+  build_sharpyuv # Build sharpyuv dependency required by libwebp >= 1.6.0
   build_libwebp # Uses dlfcn.
   build_harfbuzz
   # harf does now include build_freetype # Uses zlib, bzip2, and libpng.
@@ -2904,7 +2964,7 @@ ffmpeg_git_checkout_version=
 build_ismindex=n
 enable_gpl=y
 build_x264_with_libav=n # To build x264 with Libavformat.
-ffmpeg_git_checkout="https://github.com/FFmpeg/FFmpeg.git"
+ffmpeg_git_checkout="https://github.com/heipa24/FFmpeg"
 ffmpeg_source_dir=
 build_svt_hevc=n
 build_svt_vp9=n
@@ -2916,7 +2976,7 @@ while true; do
       --build-ffmpeg-static=y  (ffmpeg.exe, ffplay.exe and ffprobe.exe)
       --build-ffmpeg-shared=n  (ffmpeg.exe (with libavformat-x.dll, etc., ffplay.exe, ffprobe.exe and dll-files)
       --ffmpeg-git-checkout-version=[master] if you want to build a particular version of FFmpeg, ex: n3.1.1 or a specific git hash
-      --ffmpeg-git-checkout=[https://github.com/FFmpeg/FFmpeg.git] if you want to clone FFmpeg from other repositories
+      --ffmpeg-git-checkout=[https://github.com/heipa24/FFmpeg.git] if you want to clone FFmpeg from other repositories
       --ffmpeg-source-dir=[default empty] specifiy the directory of ffmpeg source code. When specified, git will not be used.
       --x265-git-checkout-version=[master] if you want to build a particular version of x265, ex: --x265-git-checkout-version=Release_3.2 or a specific git hash
       --fdk-aac-git-checkout-version= if you want to build a particular version of fdk-aac, ex: --fdk-aac-git-checkout-version=v2.0.1 or another tag
